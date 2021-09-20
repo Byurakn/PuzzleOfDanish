@@ -1,6 +1,7 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
-# Puzzle of Danish Categorical Perception Experiment 
+# Puzzle of Danish Categorical Perception Experiment 1 Norwegian
+# Byurakn Ishkhanyan & Kristian Tylén
 # AU 2018
 
 # import modules
