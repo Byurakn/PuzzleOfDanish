@@ -1,0 +1,2150 @@
+---
+title: "Cross-linguistic differences in context integration: phoneme categorization in Danish and Norwegian"
+author: "Byurakn Ishkhanyan & Riccardo Fusaroli"
+date: "29/07/2020"
+output:
+  html_document: default
+  pdf_document: default
+  toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Supplementary materials
+
+This document contains the coding scheme and supplementary materials to accompany the manuscript "Cross-linguistic differences in context integration: phoneme categorization in Danish and Norwegian." The materials are divided into two parts. Part 1 contains all the analyses reported in the manuscript, whereas Part 2 contains additional analyses and plots that are not reported in the manuscript.
+
+## Part 1
+### Load data and libraries
+
+In the following chunk, the libraries necessary for carrying out the analysis and the dataset are loaded and cleaned.
+```{r Loading the data}
+
+# Loading libraries
+pacman::p_load(tidyverse,brms,RWiener, tidybayes, boot, readr, tidyr, ggplot2, Hmisc, plyr, RColorBrewer, reshape2, ggpubr, sjPlot)
+
+
+# Loading data data from experiment 1
+d1 <- read.csv("exp1_dataset_full.csv", header = TRUE, ",") %>%
+  select(-one_of(c("Order", "X1", "X")))
+
+# Removing outliers and missing values
+d1 <- d1 %>% subset(
+  RT_target < 8.008 &
+  Response %in% c("sendt","taendt")
+  ) %>%
+  mutate(
+    Response = as.factor(as.character(Response)),
+    ResponseN = as.numeric(Response)-1,
+    Bias = as.factor(as.character(Bias)),
+    Language = as.factor(as.character(Language)),
+    Distance = as.factor(Distance),
+    Experiment = "Exp1"
+  )
+
+# Removing the participants who didn't seem to have followed the instructions
+d1 <- subset(d1, !(SubjectID %in% c("N_1_25", "N_2_67", "N_3_43", "N_5_95")))
+
+
+# Loading data from experiment 2
+d2 <- read_delim("Exp2_dataset.csv", ",") %>%
+  select(-one_of(c("X1", "Unnamed..0")))
+
+# Removing outliers and missing values
+d2 <- d2%>% subset(
+    RT_target < 8.008 &
+    Response %in% c("sendt","taendt")
+  ) %>%
+  mutate(
+    Response = as.factor(as.character(Response)),
+    ResponseN = as.numeric(Response)-1,
+    Bias = as.factor(as.character(Bias)),
+    Language = as.factor(as.character(Language)),
+    Distance = as.factor(Distance),
+    Experiment = "Exp2"
+  )
+
+# Removing the participants who didn't seem to have followed the instructions
+d2 <- subset(d2, !(SubjectID %in% c("N_2_83", "N_7_39")))
+
+
+# Merge data
+d <- rbind(d1,d2)
+
+# Summarize the dataset
+summary(d)
+```
+
+The full dataset consists of 15 columns and 23384 rows. The column *File* contains the individual stimulus items the participants have been exposed to. *RT* corresponds to reaction times (RT) calculated from sentence onset, *RT_target* corresponds to RTs calculated from target word ("taendt"/"sendt") onset. *RT_offset* contains RTs calculated from the sentence offset (negative, if the participants responded before sentence offset). 
+The column *Response* contains the response the participant clicked on ("taendt"/"sendt") as factor, whereas *ResponseN* contains the numeric equivalents of the responses (0 for "sendt" and 1 for "taendt"). The *SubjectID* is the unique ID number each participant has.The column *Language* denotes whether the participant was Danish or Norwegian. The column *Bias* shows whether a given stimulus sentence is biased towards "taendt" or "sendt". The column *Step* shows where the target word onset is on the [s]-[t^s^] continuum. A value of 1 corresponds to a clear [s], whereas a value of 10 corresponds to a clear [t^s^]. The column *hun_har_dur* is the duration of the sentence until the target word onset (it has been used to calculate RT_target). The column *Dur* contains the duration of the entire sentence. Finally, the column *Experiment* denotes whether the observation is from Experiment 1 (respond whenever you want) or Experiment 2 (wait until the end of the sentence to respond).
+
+### Experiment 1
+First, let's have a look at Experiment 1. We work with the subset d1 that corresponds to Experiment 1. The code below rearranges the data and generates Figure 3 in the manuscript.
+```{r Experiment 1: raw}
+# Raw plots exp1
+d1$Congruency <- ifelse(d1$Response == d1$Bias, "congruent", "incongruent")
+
+d1_sum <- d1 %>% dplyr::group_by(Distance, Language, Bias, SubjectID, Step)%>% 
+  dplyr::summarize(taendt = sum(Response=="taendt")/(sum(Response == "sendt")+sum(Response == "taendt")))
+
+d1_sum_sum <- d1_sum %>% group_by(Distance, Language, Bias, Step)%>% 
+  dplyr::summarize(taendt_se = sd(taendt)/sqrt(length(taendt)),
+            taendt = mean(taendt))
+d1_sum_sum$Distance = relevel (d1_sum_sum$Distance, ref = "NEAR")
+d1_sum_sum$Bias = relevel (as.factor(d1_sum_sum$Bias), ref = "taendt")
+
+d1_RT_sum <- d1 %>% group_by(Distance, Language, Step, Congruency)%>% 
+  dplyr::summarize(RT = mean(RT_target),
+    RT_se = sd(RT_target)/sqrt(length(RT_target)))
+d1_RT_sum$Distance = relevel (d1_RT_sum$Distance, ref = "NEAR")
+d1_RT_sum$Congruency = relevel (as.factor(d1_RT_sum$Congruency), ref = "congruent")
+
+
+# Figure 3 in the paper
+fig_3a <- ggplot(d1_sum_sum, aes(x = as.factor(Step), y = taendt, group = Bias)) + geom_line(aes(color = Bias))+geom_point(aes(color = Bias))+geom_errorbar(aes(ymin = taendt - taendt_se, ymax = taendt + taendt_se, color = Bias), width = 0.1) +facet_wrap(Language~Distance)+theme_classic()+
+theme(axis.text.x = element_text(size=15), axis.text.y = element_text(size=15), 
+        axis.title=element_text(size=15), strip.text = element_text(size = 15), legend.text = element_text(size = 15), legend.title = element_text (size = 15))+scale_color_manual(values = c("darkblue", "darkred"))+
+  labs(x = "s to t continuum", y = "Proportion of taendt/tent responses")
+
+# Reaction time plots
+
+fig_3b <- ggplot(d1_RT_sum, aes(x = as.factor(Step), y = RT, group = Congruency)) + geom_line(aes(color = Congruency))+geom_point(aes(color = Congruency))+geom_errorbar(aes(ymin = RT - RT_se, ymax = RT + RT_se, color = Congruency), width = 0.1) +facet_wrap(Language~Distance)+theme_classic()+
+theme(axis.text.x = element_text(size=15), axis.text.y = element_text(size=15),  
+        axis.title=element_text(size=15), strip.text = element_text(size = 15), legend.text = element_text(size = 15), legend.title = element_text (size = 15))+scale_color_manual(values = c("darkblue", "darkred"))+
+  labs(x = "s to t continuum", y = "RT (s)")
+fig_3 <-ggarrange(fig_3a, fig_3b, labels = c("a", "b"))
+fig_3
+```
+
+
+
+
+
+## Drift Diffusion Model
+
+The following chunk builds up a drift diffusion model on a participant-by-participant basis (the details can be found in the manuscript), extracts posterior samples from individual models and saves the data set. For computational reasons the code is commented out.
+ 
+```{r DDM: participant by participant}
+#### DDM exp1 ####
+
+## The formula
+Model_f <-  bf(RT_target | dec(ResponseN) ~ 0 + Bias:Distance + Bias:Distance:mo(Step),
+              bs ~ 0 + Bias:Distance + Bias:Distance:mo(Step),
+               bias = 0.5) # Formula of ddm removing everything that is between subjects and the subject random effects
+get_prior(Model_f, family = wiener(link_bs = "identity",
+                                  link_ndt = "identity",
+                                  link_bias = "identity"), data = d1)
+prior <- c(
+ prior(normal(0, .5), class = b),
+ prior(normal(1.5, .5), class = b, dpar = bs)
+)
+
+make_stancode(Model_f,
+              family = wiener(link_bs = "identity",
+                              link_ndt = "identity",
+                              link_bias = "identity"),
+              data = d1,
+              prior = prior)
+
+tmp_dat <- make_standata(Model_f,
+                         family = wiener(link_bs = "identity",
+                              link_ndt = "identity",
+                              link_bias = "identity"),
+                            data = d1, prior = prior)
+
+str(tmp_dat, 1, give.attr = FALSE)
+
+initfun <- function() {
+  list(
+    b = rnorm(tmp_dat$K),
+    b_bs = runif(tmp_dat$K_bs, 3, 4), #1, 2
+    temp_ndt_Intercept = runif(tmp_dat$K_ndt, 0.45, 0.5) # 0.1, 0.15
+  )
+}
+
+for (participant in unique(d1$SubjectID)){
+  print(participant)
+
+  participant_m = brm(Model_f,
+                subset(d1,SubjectID==participant),
+                prior = prior,
+                sample_prior = TRUE,
+                inits = initfun,
+                family = wiener(link_bs = "identity",
+                                  link_ndt = "identity",
+                                  link_bias = "identity"),
+                file=paste0("d",participant,"_m"),
+                chains = 2, cores = 2, iter = 2000,
+                control =  list(
+                    max_treedepth = 20,
+                    adapt_delta=0.99))
+  participant_m <- add_criterion(participant_m,
+                                       criterion=c("loo","R2"), file=paste0("d",participant,"_m"))
+}
+
+# this function extracts posterior samples the individual models
+read_models <- function(filename) {
+  #read data
+  d <- readRDS(filename)
+  #parse filename; study, diagnosis, subject, trial
+  vars = str_match(filename,"(D|N)_(\\d+)_(\\d+)(\\d+)(\\d*)")
+  print(vars)
+  vars = as.data.frame (t(vars[1:nrow(vars),1:2]))
+  print(vars)
+  names(vars) = c("SubjectID", "Language")
+  vars$Experiment = "Exp1"
+  post <- posterior_samples(d)
+  d <- cbind(vars,post)
+  #combine all these data
+  return(d)
+}
+CatPerc_data1 = list.files(pattern = "*.rds") %>%
+  purrr::map_df(read_models)
+
+read_models <- function(filename) {
+  #read data
+  d <- readRDS(filename)
+  #parse filename; study, diagnosis, subject, trial
+  vars = str_match(filename,"(D|N)_(\\d+)_(\\d+)(\\d+)(\\d*)")
+  print(vars)
+  vars = as.data.frame (t(vars[1:nrow(vars),1:2]))
+  print(vars)
+  names(vars) = c("SubjectID", "Language")
+  vars$Experiment = "Exp2"
+  post <- posterior_samples(d)
+  d <- cbind(vars,post)
+  #combine all these data
+  return(d)
+}
+
+CatPerc_data2 = list.files(pattern = "*.rds") %>%
+  purrr::map_df(read_models)
+
+
+CatPerc1 = CatPerc_data1[, 1:92]
+CatPerc2 = CatPerc_data2[, 1:92]
+CatPerc = rbind(CatPerc1, CatPerc2)
+
+CatPerc <- CatPerc %>% mutate(
+  drift_tNEARmid = `b_Biastaendt:DistanceNEAR` + `simo_Biastaendt:DistanceNEAR:moStep1[1]`+`simo_Biastaendt:DistanceNEAR:moStep1[2]`+`simo_Biastaendt:DistanceNEAR:moStep1[3]`+`simo_Biastaendt:DistanceNEAR:moStep1[4]`,
+  drift_sNEARmid = `b_Biassendt:DistanceNEAR` + `simo_Biassendt:DistanceNEAR:moStep1[1]`+`simo_Biassendt:DistanceNEAR:moStep1[2]`+`simo_Biassendt:DistanceNEAR:moStep1[3]`+`simo_Biassendt:DistanceNEAR:moStep1[4]`,
+  drift_tFARmid = `b_Biastaendt:DistanceFAR` + `simo_Biastaendt:DistanceFAR:moStep1[1]`+`simo_Biastaendt:DistanceFAR:moStep1[2]`+`simo_Biastaendt:DistanceFAR:moStep1[3]`+`simo_Biastaendt:DistanceFAR:moStep1[4]`,
+  drift_sFARmid = `b_Biassendt:DistanceFAR` + `simo_Biassendt:DistanceFAR:moStep1[1]`+`simo_Biassendt:DistanceFAR:moStep1[2]`+`simo_Biassendt:DistanceFAR:moStep1[3]`+`simo_Biassendt:DistanceFAR:moStep1[4]`,
+  bs_tNEARmid = `b_bs_Biastaendt:DistanceNEAR` + `simo_bs_Biastaendt:DistanceNEAR:moStep1[1]`+`simo_bs_Biastaendt:DistanceNEAR:moStep1[2]`+`simo_bs_Biastaendt:DistanceNEAR:moStep1[3]`+`simo_bs_Biastaendt:DistanceNEAR:moStep1[4]`,
+  bs_sNEARmid = `b_bs_Biassendt:DistanceNEAR` + `simo_bs_Biassendt:DistanceNEAR:moStep1[1]`+`simo_bs_Biassendt:DistanceNEAR:moStep1[2]`+`simo_bs_Biassendt:DistanceNEAR:moStep1[3]`+`simo_bs_Biassendt:DistanceNEAR:moStep1[4]`,
+  bs_tFARmid = `b_bs_Biastaendt:DistanceFAR` + `simo_bs_Biastaendt:DistanceFAR:moStep1[1]`+`simo_bs_Biastaendt:DistanceFAR:moStep1[2]`+`simo_bs_Biastaendt:DistanceFAR:moStep1[3]`+`simo_bs_Biastaendt:DistanceFAR:moStep1[4]`,
+  bs_sFARmid = `b_bs_Biassendt:DistanceFAR` + `simo_bs_Biassendt:DistanceFAR:moStep1[1]`+`simo_bs_Biassendt:DistanceFAR:moStep1[2]`+`simo_bs_Biassendt:DistanceFAR:moStep1[3]`+`simo_Biassendt:DistanceFAR:moStep1[4]`
+)
+
+
+# from wide to long
+
+CatPerc_short = CatPerc[,c(1:4, 93:100)]
+CatPerc_long = reshape(CatPerc_short, direction="long",
+        varying=list(c("drift_tNEARmid", "drift_sNEARmid", "drift_tFARmid", "drift_sFARmid"),
+                       c("bs_tNEARmid", "bs_sNEARmid", "bs_tFARmid","bs_sFARmid")),
+        times = c("drift_tNEARmid", "drift_sNEARmid", "drift_tFARmid", "drift_sFARmid"),
+        v.names=c("drift_rate","bs"))
+
+# Rename the columns and some values for our purposes.
+names(CatPerc_long)[names(CatPerc_long) == "time"] <- "Bias"
+CatPerc_long$Distance = CatPerc_long$Bias
+CatPerc_long$Bias = gsub("drift_s(FAR|NEAR)mid", "sendt", CatPerc_long$Bias)
+CatPerc_long$Bias = gsub("drift_t(FAR|NEAR)mid", "taendt", CatPerc_long$Bias)
+CatPerc_long$Distance = gsub("drift_(s|t)FARmid", "FAR", CatPerc_long$Distance)
+CatPerc_long$Distance = gsub("drift_(s|t)NEARmid", "NEAR", CatPerc_long$Distance)
+
+# saves the dataset for later use
+write.csv(CatPerc_long, "~/Dropbox/DDM_CategoricalPerception/CatPerc_DDM_byparticipant_postsamples.csv")
+
+```
+
+## Follow-up models
+Here, using the posterior samples extracted from participant by participant models above, we built follow-up models one separately for drift rate and another one for boundary separation. We used the previously saved posterior samples dataset. We built 10 models with 10 different subsets of the posterior samples. Only the first one (m1) was analyzed (more details can be found in the manuscript). Again, for computational issues the code is commented out and m1 is loaded directly for analysis.
+
+### Drift rate
+```{r}
+# 
+# # # Building a new model for drift rate
+# # 
+# # # read the dataset saved in the previous chunk
+# d_ddm <- read_csv("~/Dropbox/DDM_CategoricalPerception/CatPerc_DDM_byparticipant_postsamples.csv")
+# d_ddm_ndt <- d_ddm %>% group_by(Language, Experiment)%>%
+#   summarize(ndt = mean (b_ndt_Intercept),
+#             q025 = quantile (b_ndt_Intercept, probs = 0.025),
+#             q0975 = quantile (b_ndt_Intercept, probs = 0.975))
+# # 
+# # # adding id numbers to the samples
+# # for (s in unique(d_ddm$SubjectID)) {
+# #   print(s)
+# #   for (b in unique(d_ddm$Bias)){
+# #     for (di in unique(d_ddm$Distance)){
+# #       d_ddm$id[d_ddm$SubjectID==s & d_ddm$Bias==b & d_ddm$Distance==di] <- seq(nrow(d_ddm[d_ddm$SubjectID==s & d_ddm$Bias==b & d_ddm$Distance==di,]))
+# #     }
+# #   }
+# # }
+# # 
+# # 
+# # 
+# # get_prior(data =  subset(d_ddm, Experiment=="Exp1" & id < 101),
+# #           formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #           family = gaussian)
+# # 
+# # prior = c(
+# #   prior(normal(0, 0.3), class=b),
+# #   prior(lkj(8), class=cor),
+# #   prior(normal(0, .01), class=sd)
+# # )
+# # 
+# # # Build the first drift rate model. The analysis in the paper is based on this model. 
+# # 
+# # m1 <- brm(
+# #   data = subset(d_ddm, Experiment=="Exp1" & id < 101),
+# #   formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #   family = gaussian,
+# #   prior = prior,
+# #   sample_prior = TRUE,
+# #   file="Drift_rate_exp1_100_1",
+# #   iter = 4e3,
+# #   chains = 2,
+# #   cores = 2,
+# #   control = list(
+# #     max_treedepth = 20,
+# #     adapt_delta = 0.99
+# #   )
+# # )
+# # 
+# # Drift_rate_exp1_100_4000_1 <- add_criterion(m1, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_4000_1")
+# # 
+# # pp_check(m1, nsamples=100)
+# # 
+# # m2 <- brm(
+# #   data = subset(d_ddm, Experiment=="Exp1" & id > 100 & id < 201),
+# #   formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #   family = gaussian,
+# #   prior = prior,
+# #   sample_prior = T,
+# #   file="Drift_rate_exp1_100_2",
+# #   iter = 4e3,
+# #   chains = 2,
+# #   cores = 2,
+# #   control = list(
+# #     max_treedepth = 20,
+# #     adapt_delta = 0.99
+# #   )
+# #   
+# # )
+# # Drift_rate_exp1_100_2 <- add_criterion(m2, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_2")
+# # 
+# # pp_check(m2, nsamples=100)
+# # 
+# # 
+# # m3 <- brm(
+# #   data = subset(d_ddm, Experiment=="Exp1" & id > 200 & id < 301),
+# #   formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #   family = gaussian,
+# #   prior = prior,
+# #   sample_prior = T,
+# #   file="Drift_rate_exp1_100_3",
+# #   iter = 4e3,
+# #   chains = 2,
+# #   cores = 2,
+# #   control = list(
+# #     max_treedepth = 20,
+# #     adapt_delta = 0.99
+# #   )
+# #   
+# # )
+# # Drift_rate_exp1_100_3 <- add_criterion(m3, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_3")
+# # pp_check(m3, nsamples=100)
+# # 
+# # m4 <- brm(
+# #   data = subset(d_ddm, Experiment=="Exp1" & id > 300 & id < 401),
+# #   formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #   family = gaussian,
+# #   prior = prior,
+# #   sample_prior = T,
+# #   file="Drift_rate_exp1_100_4",
+# #   iter = 4e3,
+# #   chains = 2,
+# #   cores = 2,
+# #   control = list(
+# #     max_treedepth = 20,
+# #     adapt_delta = 0.99
+# #   )
+# #   
+# # )
+# # 
+# # Drift_rate_exp1_100_4 <- add_criterion(m4, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_4")
+# # pp_check(m4, nsamples=100)
+# # 
+# # 
+# # m5 <- brm(
+# #   data = subset(d_ddm, Experiment=="Exp1" & id > 400 & id < 501),
+# #   formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #   family = gaussian,
+# #   prior = prior,
+# #   sample_prior = T,
+# #   file="Drift_rate_exp1_100_5",
+# #   iter = 4e3,
+# #   chains = 2,
+# #   cores = 2,
+# #   control = list(
+# #     max_treedepth = 20,
+# #     adapt_delta = 0.99
+# #   )
+# #   
+# # )
+# # 
+# # Drift_rate_exp1_100_5 <- add_criterion(m3, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_5")
+# # pp_check(m5, nsamples=100)
+# # 
+# # 
+# # m6 <- brm(
+# #   data = subset(d_ddm, Experiment=="Exp1" & id > 500 & id < 601),
+# #   formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #   family = gaussian,
+# #   prior = prior,
+# #   sample_prior = T,
+# #   file="Drift_rate_exp1_100_6",
+# #   iter = 4e3,
+# #   chains = 2,
+# #   cores = 2,
+# #   control = list(
+# #     max_treedepth = 20,
+# #     adapt_delta = 0.99
+# #   )
+# #   
+# # )
+# # Drift_rate_exp1_100_6 <- add_criterion(m6, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_6")
+# # pp_check(m6, nsamples=100)
+# # 
+# # 
+# # m7 <- brm(
+# #   data = subset(d_ddm, Experiment=="Exp1" & id > 600 & id < 701),
+# #   formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #   family = gaussian,
+# #   prior = prior,
+# #   sample_prior = T,
+# #   file="Drift_rate_exp1_100_7",
+# #   iter = 1e3,
+# #   chains = 2,
+# #   cores = 2,
+# #   control = list(
+# #     max_treedepth = 20,
+# #     adapt_delta = 0.99
+# #   )
+# #   
+# # )
+# # 
+# # Drift_rate_exp1_100_7 <- add_criterion(m7, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_7")
+# # pp_check(m7, nsamples=100)
+# # 
+# # 
+# # m8 <- brm(
+# #   data = subset(d_ddm, Experiment=="Exp1" & id > 700 & id < 801),
+# #   formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #   family = gaussian,
+# #   prior = prior,
+# #   sample_prior = T,
+# #   file="Drift_rate_exp1_100_8",
+# #   iter = 4e3,
+# #   chains = 2,
+# #   cores = 2,
+# #   control = list(
+# #     max_treedepth = 20,
+# #     adapt_delta = 0.99
+# #   )
+# #   
+# # )
+# # 
+# # Drift_rate_exp1_100_8 <- add_criterion(m8, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_8")
+# # pp_check(m8, nsamples=100)
+# # 
+# # 
+# # m9 <- brm(
+# #   data = subset(d_ddm, Experiment=="Exp1" & id > 800 & id < 901),
+# #   formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #   family = gaussian,
+# #   prior = prior,
+# #   sample_prior = T,
+# #   file="Drift_rate_exp1_100_9",
+# #   iter = 4e3,
+# #   chains = 2,
+# #   cores = 2,
+# #   control = list(
+# #     max_treedepth = 20,
+# #     adapt_delta = 0.99
+# #   )
+# #   
+# # )
+# # 
+# # Drift_rate_exp1_100_9 <- add_criterion(m9, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_9")
+# # pp_check(m9, nsamples=100)
+# # 
+# # 
+# # 
+# # m10 <- brm(
+# #   data = subset(d_ddm, Experiment=="Exp1" & id > 900 & id < 1001),
+# #   formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+# #   family = gaussian,
+# #   prior = prior,
+# #   sample_prior = T,
+# #   file="Drift_rate_exp1_100_10",
+# #   iter = 4e3,
+# #   chains = 2,
+# #   cores = 2,
+# #   control = list(
+# #     max_treedepth = 20,
+# #     adapt_delta = 0.99
+# #   )
+# #   
+# # )
+# # Drift_rate_exp1_100_10 <- add_criterion(m10, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_10")
+# # pp_check(m10, nsamples=100)
+
+```
+
+Here, we report m1. The table shows the model parameters, also reported in the manuscript.
+
+```{r}
+ m1 <- readRDS("~/Dropbox/DDM_CategoricalPerception/Drift_rate_exp1_100_1.rds")
+tab_model(m1, show.std = TRUE)
+# effect size
+bayes_R2(m1)
+```
+
+
+The code below generates Figure 4 in the manuscript. 
+
+```{r Visualization}
+# rearranging the data for posterior density plots
+m1_p <- posterior_samples(m1, "b_")
+bias_NEAR_D <- m1_p$`b_LanguageD:Biastaendt:DistanceNEAR`-m1_p$`b_LanguageD:Biassendt:DistanceNEAR`
+bias_NEAR_N <- m1_p$`b_LanguageN:Biastaendt:DistanceNEAR`-m1_p$`b_LanguageN:Biassendt:DistanceNEAR`
+bias_FAR_D <- m1_p$`b_LanguageD:Biastaendt:DistanceFAR`-m1_p$`b_LanguageD:Biassendt:DistanceFAR`
+bias_FAR_N <- m1_p$`b_LanguageN:Biastaendt:DistanceFAR`-m1_p$`b_LanguageN:Biassendt:DistanceFAR`
+
+m1_p <- data.frame(bias_NEAR_D, bias_NEAR_N, bias_FAR_D, bias_FAR_N)
+m1_p <- m1_p %>%
+  pivot_longer (everything(),names_to = "conditions", values_to = "drift_rate")
+
+m1_p$Language = m1_p$conditions
+m1_p$Distance = m1_p$conditions
+m1_p$Language = gsub("bias_(NEAR|FAR)_N", "Norwegian", m1_p$Language)
+m1_p$Language = gsub("bias_(NEAR|FAR)_D", "Danish", m1_p$Language)
+
+m1_p$Distance = gsub("bias_FAR_(D|N)", "FAR", m1_p$Distance)
+m1_p$Distance = gsub("bias_NEAR_(D|N)", "NEAR", m1_p$Distance)
+m1_p$Distance = relevel(as.factor(m1_p$Distance), ref = "NEAR")
+
+# Building the raincloud plot
+
+geom_flat_violin <-
+  function(mapping = NULL,
+           data = NULL,
+           stat = "ydensity",
+           position = "dodge",
+           trim = TRUE,
+           scale = "area",
+           show.legend = NA,
+           inherit.aes = TRUE,
+           ...) {
+    ggplot2::layer(
+      data = data,
+      mapping = mapping,
+      stat = stat,
+      geom = GeomFlatViolin,
+      position = position,
+      show.legend = show.legend,
+      inherit.aes = inherit.aes,
+      params = list(trim = trim,
+                    scale = scale,
+                    ...)
+    )
+  }
+GeomFlatViolin <-
+  ggproto(
+    "GeomFlatViolin",
+    Geom,
+    setup_data = function(data, params) {
+      data$width <- data$width %||%
+        params$width %||% (resolution(data$x, FALSE) * 0.9)
+      
+      # ymin, ymax, xmin, and xmax define the bounding rectangle for each group
+      data %>%
+        dplyr::group_by(.data = ., group) %>%
+        dplyr::mutate(
+          .data = .,
+          ymin = min(y),
+          ymax = max(y),
+          xmin = x,
+          xmax = x + width / 2
+        )
+    },
+    
+    draw_group = function(data, panel_scales, coord)
+    {
+      # Find the points for the line to go all the way around
+      data <- base::transform(data,
+                              xminv = x,
+                              xmaxv = x + violinwidth * (xmax - x))
+      
+      # Make sure it's sorted properly to draw the outline
+      newdata <-
+        base::rbind(
+          dplyr::arrange(.data = base::transform(data, x = xminv), y),
+          dplyr::arrange(.data = base::transform(data, x = xmaxv), -y)
+        )
+      
+      # Close the polygon: set first and last point the same
+      # Needed for coord_polar and such
+      newdata <- rbind(newdata, newdata[1,])
+      
+      ggplot2:::ggname("geom_flat_violin",
+                       GeomPolygon$draw_panel(newdata, panel_scales, coord))
+    },
+    
+    draw_key = draw_key_polygon,
+    
+    default_aes = ggplot2::aes(
+      weight = 1,
+      colour = "grey20",
+      fill = "white",
+      size = 0.5,
+      alpha = NA,
+      linetype = "solid"
+    ),
+    
+    required_aes = c("x", "y")
+  )
+
+# Figure 4
+fig_4 <- ggplot(data = m1_p, aes(y = drift_rate, x = Language, fill = Distance)) +
+geom_flat_violin(position = position_nudge(x = .2, y = 0), alpha = .8) +
+geom_point(aes(y = drift_rate, color = Distance), position = position_jitter(width = .15), size = .5, alpha = 0.8) + 
+geom_boxplot(width = .1, guides = FALSE, outlier.shape = NA, alpha = 0.5) +
+expand_limits(x = 3) +
+guides(fill = FALSE, color = guide_legend(override.aes = list(size = 3)))+
+scale_color_brewer(type = "qual", palette = 2) +
+scale_fill_brewer(type = "qual", palette = 2) +
+  labs(y = "Contextual bias effect on drift rate")+
+coord_flip() +
+theme_bw()+
+theme(axis.text.x = element_text(size=12), axis.text.y = element_text(size=12),  
+        axis.title=element_text(size=14), plot.title = element_text(size =14),
+        legend.title = element_text(size=14), legend.text = element_text(size=12))
+fig_4
+```
+
+The hypothesis testing reported in the results section in the manuscript has been carried out using the code below.
+
+```{r Hypothesis testing DDM}
+# H1: language x distance x bias interaction
+hypothesis(m1, "(LanguageN:Biastaendt:DistanceNEAR - LanguageN:Biassendt:DistanceNEAR) - (LanguageN:Biastaendt:DistanceFAR - LanguageN:Biassendt:DistanceFAR)>(LanguageD:Biastaendt:DistanceNEAR - LanguageD:Biassendt:DistanceNEAR) - (LanguageD:Biastaendt:DistanceFAR - LanguageD:Biassendt:DistanceFAR) ") #YEPS 
+
+## Drift rate is faster in NEAR than FAR in Norwegian only, not in Danish
+hypothesis(m1, "LanguageD:Biastaendt:DistanceNEAR - LanguageD:Biassendt:DistanceNEAR > LanguageD:Biastaendt:DistanceFAR - LanguageD:Biassendt:DistanceFAR")
+hypothesis(m1, "LanguageN:Biastaendt:DistanceNEAR - LanguageN:Biassendt:DistanceNEAR > LanguageN:Biastaendt:DistanceFAR - LanguageN:Biassendt:DistanceFAR")
+
+
+## Tændt bias would involve higher drift rate in both languages
+
+hypothesis(m1, "LanguageD:Biastaendt:DistanceNEAR - LanguageD:Biassendt:DistanceNEAR > 0 ") #YEP
+hypothesis(m1, "LanguageD:Biastaendt:DistanceFAR - LanguageD:Biassendt:DistanceFAR > 0 ") # YEP
+hypothesis(m1, "LanguageN:Biastaendt:DistanceNEAR - LanguageN:Biassendt:DistanceNEAR > 0 ") #YEP
+
+hypothesis(m1, "LanguageN:Biastaendt:DistanceFAR - LanguageN:Biassendt:DistanceFAR > 0 ") # YEP
+```
+
+
+### Simulations
+Using the drift rate and boundary separation estimates, we created simulations and plotted them. The figure below corresponds to Figure 5 in the manuscript.
+```{r} 
+#####  20 DDM simulations per condition
+## Danish taendt bias NEAR
+bias = 0 
+diffusionDrift_DK_NEAR_taendt=-0.2
+decisionBoundary_DK_NEAR_taendt = 2.36/2
+ndt=0.57 
+ 
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_DK_NEAR_taendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_DK_NEAR_taendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.36/2) {simd$Value[n]<- 2.36/2} 
+  else if (simd$Value[n] < -2.36/2) {simd$Value[n] <- -2.36/2}}
+
+
+DtaendtNEAR = simd
+DtaendtNEAR$Bias = "taendt"
+DtaendtNEAR$Distance = "NEAR"
+DtaendtNEAR$Language = "D"
+
+
+### Danish NEAR sendt bias
+
+bias = 0 
+diffusionDrift_DK_NEAR_sendt=-0.27
+decisionBoundary_DK_NEAR_sendt = 2.29/2
+ndt=0.57 
+ 
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_DK_NEAR_sendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_DK_NEAR_sendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.29/2) {simd$Value[n]<- 2.29/2} 
+  else if (simd$Value[n] < -2.29/2) {simd$Value[n] <- -2.29/2}}
+
+
+DsendtNEAR = simd
+DsendtNEAR$Bias = "sendt"
+DsendtNEAR$Distance = "NEAR"
+DsendtNEAR$Language = "D"
+
+## Norwegian NEAR tændt bias
+bias = 0 
+diffusionDrift_NO_NEAR_taendt=-0.6
+decisionBoundary_NO_NEAR_taendt = 2.63/2
+ndt=0.57 
+ 
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_NO_NEAR_taendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_NO_NEAR_taendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.63/2) {simd$Value[n]<- 2.63/2} 
+  else if (simd$Value[n] < -2.63/2) {simd$Value[n] <- -2.63/2}}
+
+NtaendtNEAR = simd
+NtaendtNEAR$Bias = "taendt"
+NtaendtNEAR$Distance = "NEAR"
+NtaendtNEAR$Language = "N"
+
+## Norwegian NEAR sendt bias
+bias = 0 
+diffusionDrift_NO_NEAR_sendt=-0.71
+decisionBoundary_NO_NEAR_sendt = 2.54/2
+
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_NO_NEAR_sendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_NO_NEAR_sendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.54/2) {simd$Value[n]<- 2.54/2} 
+  else if (simd$Value[n] < -2.54/2) {simd$Value[n] <- -2.54/2}}
+
+NsendtNEAR = simd
+NsendtNEAR$Bias = "sendt"
+NsendtNEAR$Distance = "NEAR"
+NsendtNEAR$Language = "N"
+
+ddm_NEAR = rbind(DtaendtNEAR, DsendtNEAR, NtaendtNEAR, NsendtNEAR)
+ddm_DK = rbind(DtaendtNEAR, DsendtNEAR)
+ddm_NO = rbind(NtaendtNEAR, NsendtNEAR)
+
+ddm_NEAR$Language = gsub("N", "Norwegian", as.character(ddm_NEAR$Language))
+ddm_NEAR$Language = gsub("D", "Danish", as.character(ddm_NEAR$Language))
+ddm_NEAR$Bias = relevel(as.factor(ddm_NEAR$Bias), ref = "taendt")
+
+# Let's see how things change in FAR
+
+### plotting 20 single simulations for each condition
+## Danish taendt bias FAR
+bias = 0 
+diffusionDrift_DK_FAR_taendt=-0.14
+decisionBoundary_DK_FAR_taendt = 2.61/2
+ndt=0.57 
+
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_DK_FAR_taendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_DK_FAR_taendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.61/2) {simd$Value[n]<- 2.61/2} 
+  else if (simd$Value[n] < -2.61/2) {simd$Value[n] <- -2.61/2}}
+
+
+DtaendtFAR = simd
+DtaendtFAR$Bias = "taendt"
+DtaendtFAR$Distance = "FAR"
+DtaendtFAR$Language = "D"
+
+
+# Danish FAR sendt bias
+
+bias = 0 
+diffusionDrift_DK_FAR_sendt=-0.22
+decisionBoundary_DK_FAR_sendt = 2.65/2
+ndt=0.57 
+ 
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_DK_FAR_sendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_DK_FAR_sendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.65/2) {simd$Value[n]<- 2.65/2} 
+  else if (simd$Value[n] < -2.65/2) {simd$Value[n] <- -2.65/2}}
+
+
+DsendtFAR = simd
+DsendtFAR$Bias = "sendt"
+DsendtFAR$Distance = "FAR"
+DsendtFAR$Language = "D"
+
+## Norwegian FAR tændt bias
+bias = 0 
+diffusionDrift_NO_FAR_taendt=-0.48
+decisionBoundary_NO_FAR_taendt = 2.85/2
+ndt=0.57 
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_NO_FAR_taendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_NO_FAR_taendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.85/2) {simd$Value[n]<- 2.85/2} 
+  else if (simd$Value[n] < -2.85/2) {simd$Value[n] <- -2.85/2}}
+
+NtaendtFAR = simd
+NtaendtFAR$Bias = "taendt"
+NtaendtFAR$Distance = "FAR"
+NtaendtFAR$Language = "N"
+
+# Norwegian FAR sendt bias
+bias = 0 
+diffusionDrift_NO_FAR_sendt=-0.54
+decisionBoundary_NO_FAR_sendt = 2.98/2
+
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_NO_FAR_sendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_NO_FAR_sendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.98/2) {simd$Value[n]<- 2.98/2} 
+  else if (simd$Value[n] < -2.98/2) {simd$Value[n] <- -2.98/2}}
+
+NsendtFAR = simd
+NsendtFAR$Bias = "sendt"
+NsendtFAR$Distance = "FAR"
+NsendtFAR$Language = "N"
+
+ddm_FAR = rbind(DtaendtFAR, DsendtFAR, NtaendtFAR, NsendtFAR)
+ddm_DK = rbind(DtaendtFAR, DsendtFAR)
+ddm_NO = rbind(NtaendtFAR, NsendtFAR)
+
+ddm_FAR$Language = gsub("N", "Norwegian", as.character(ddm_FAR$Language))
+ddm_FAR$Language = gsub("D", "Danish", as.character(ddm_FAR$Language))
+
+ddm_sim = rbind(ddm_NEAR, ddm_FAR)
+ddm_sim$Bias = relevel(as.factor(ddm_sim$Bias), ref = "taendt")
+ddm_sim$Distance = relevel(as.factor(ddm_sim$Distance), ref = "NEAR")
+
+p_sim_DK = ggplot(subset(ddm_sim, Language == "Danish"), aes(Step,Value, color = Sim))+geom_line()+ facet_wrap(Distance~Bias)+
+  theme_classic()+guides(color=FALSE, size = FALSE)+
+  theme(axis.text.x = element_text(size=15), axis.text.y = element_text(size=15),  
+        axis.title=element_text(size=15), plot.title = element_text(size =15),
+        legend.title = element_text(size=15), strip.text = element_text(size = 15))+
+  labs(x = "Time Step", y = "Boundary Separation", title="a. DDM Danish")+xlim(0,150)+ylim(-1.5,1.5)+geom_hline(yintercept = 0)
+
+
+p_sim_NO = ggplot(subset(ddm_sim, Language == "Norwegian"), aes(Step,Value, color = Sim))+geom_line()+ facet_wrap(Distance~Bias)+
+  theme_classic()+guides(color=FALSE, size = FALSE)+
+  theme(axis.text.x = element_text(size=15), axis.text.y = element_text(size=15),  
+        axis.title=element_text(size=15), plot.title = element_text(size =15),
+        legend.title = element_text(size=15), strip.text = element_text(size = 15))+
+  labs(x = "Time Step", y = "Boundary Separation", title="b. DDM Norwegian")+xlim(0,150)+ylim(-1.5,1.5)+geom_hline(yintercept = 0)
+
+
+fig_5 <- ggarrange(p_sim_DK, p_sim_NO)
+
+fig_5
+
+
+```
+
+
+
+# Experiment 2 
+
+The analysis in Experiment 2 follows the exact same procedure as in Experiment 1. We start with plotting the raw data in the traditional way. The code below generates Figure 6 in the manuscript.
+```{r Experiment 2: raw}
+# Raw plots Exp2
+d2_sum <- d2 %>% dplyr::group_by(Distance, Language, Bias, SubjectID, Step)%>% 
+  dplyr::summarize(taendt = sum(Response=="taendt")/(sum(Response == "sendt")+sum(Response == "taendt")))
+
+d2_sum_sum <- d2_sum %>% dplyr::group_by(Distance, Language, Bias, Step)%>% 
+  dplyr::summarize(taendt_se = sd(taendt)/sqrt(length(taendt)),
+            taendt = mean(taendt))
+d2_sum_sum$Distance = relevel (as.factor(d2_sum_sum$Distance), ref = "NEAR")
+d2_sum_sum$Bias = relevel (as.factor(d2_sum_sum$Bias), ref = "taendt")
+
+# for the RT data
+d2$Congruency <- ifelse(d2$Response == d2$Bias, "congruent", "incongruent")
+d2_RT_sum <- d2 %>% group_by(Distance, Language, Step, Congruency)%>% 
+  dplyr::summarize(RT = mean(RT_target),
+    RT_se = sd(RT_target)/sqrt(length(RT_target)))
+d2_RT_sum$Distance = relevel (d2_RT_sum$Distance, ref = "NEAR")
+d2_RT_sum$Congruency = relevel (as.factor(d2_RT_sum$Congruency), ref = "congruent")
+
+
+# Figure 6 in the paper
+fig_6a <- ggplot(d2_sum_sum, aes(x = as.factor(Step), y = taendt, group = Bias)) + geom_line(aes(color = Bias))+geom_point(aes(color = Bias))+geom_errorbar(aes(ymin = taendt - taendt_se, ymax = taendt + taendt_se, color = Bias), width = 0.1) +facet_wrap(Language~Distance)+theme_classic()+
+theme(axis.text.x = element_text(size=15), axis.text.y = element_text(size=15),  
+        axis.title=element_text(size=15), strip.text = element_text(size = 15), plot.title = element_text(size =15), legend.text = element_text(size = 15), legend.title = element_text (size = 15))+scale_color_manual(values = c("darkblue", "darkred"))+
+  labs(x = "s to t continuum", y = "Proportion of taendt/tent responses")
+
+fig_6b <- ggplot(d2_RT_sum, aes(x = as.factor(Step), y = RT, group = Congruency)) + geom_line(aes(color = Congruency))+geom_point(aes(color = Congruency))+geom_errorbar(aes(ymin = RT - RT_se, ymax = RT + RT_se, color = Congruency), width = 0.1) +facet_wrap(Language~Distance)+theme_classic()+
+theme(axis.text.x = element_text(size=15), axis.text.y = element_text(size=15),  
+        axis.title=element_text(size=15), strip.text = element_text(size = 15), legend.text = element_text(size = 15), legend.title = element_text (size = 15))+scale_color_manual(values = c("darkblue", "darkred"))+
+  labs(x = "s to t continuum", y = "RT (s)")
+fig_6 <-ggarrange(fig_6a, fig_6b, labels = c("a", "b"))
+fig_6
+
+```
+
+## Experiment 2
+
+### Drift Diffusion Model: follow-up models
+### Drift rate
+
+Again, the procedure is exactly the same as for Experiment 1. The code is commented out for computational reasons. Although we built 10 models with 10 different subsets of the posterior samples, we load and report only the first one (m2_1).
+```{r Drift rate: building the model 2}
+# # Exp2: DDM
+
+get_prior(data = subset(d_ddm, Experiment=="Exp2"),
+          formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+          family = gaussian)
+
+# setting priors
+prior = c(
+  prior(normal(0, 0.5), class=b),
+  prior(lkj(8), class=cor),
+  prior(normal(0, .01), class=sd)
+)
+
+m2_1 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id <100),
+  formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="Drift_rate_exp2_100_1",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+Drift_rate_exp2_100_1 <- add_criterion(m2_1, criterion = c("loo","waic","R2"),file="Drift_rate_exp2_100_1")
+pp_check(m2_1, nsamples=100)
+
+m2_2 <- brm(
+  data = subset(d_ddm,Experiment == "Exp2" & id > 100 & id < 201),
+  formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="Drift_rate_exp2_100_2",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+Drift_rate_exp2_100_2 <- add_criterion(m2_2, criterion = c("loo","waic","R2"),file="Drift_rate_exp2_100_2")
+pp_check(m2_2, nsamples=100)
+
+m2_3 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 200 & id < 301),
+  formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="Drift_rate_exp2_100_3",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+Drift_rate_exp2_100_3 <- add_criterion(m2_3, criterion = c("loo","waic","R2"),file="Drift_rate_exp2_100_3")
+pp_check(m2_3, nsamples=100)
+
+m2_4 <- brm(
+  data = subset(d_ddm,Experiment == "Exp2" & id > 300 & id < 401),
+  formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="Drift_rate_exp2_100_4",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+Drift_rate_exp2_100_4 <- add_criterion(m2_4, criterion = c("loo","waic","R2"),file="Drift_rate_exp2_100_4")
+pp_check(m2_4, nsamples=100)
+
+m2_5 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 400 & id < 501),
+  formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="Drift_rate_exp2_100_5",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+Drift_rate_exp2_100_5 <- add_criterion(m2_5, criterion = c("loo","waic","R2"),file="Drift_rate_exp2_100_5")
+pp_check(m2_5, nsamples=100)
+
+m2_6 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 500 & id < 601),
+  formula = drift_rate ~ 0 +Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="Drift_rate_exp2_100_6",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+Drift_rate_exp2_100_6 <- add_criterion(m2_6, criterion = c("loo","waic","R2"),file="Drift_rate_exp2_100_6")
+pp_check(m2_6, nsamples=100)
+
+m2_7 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2"& id > 600 & id < 701),
+  formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="Drift_rate_exp2_100_7",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+Drift_rate_exp2_100_7 <- add_criterion(m2_7, criterion = c("loo","waic","R2"),file="Drift_rate_exp2_100_8")
+pp_check(m2_7, nsamples=100)
+
+m2_8 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 700 & id < 801),
+  formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="Drift_rate_exp2_100_8",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+Drift_rate_exp2_100_8 <- add_criterion(m2_8, criterion = c("loo","waic","R2"),file="Drift_rate_exp2_100_8")
+pp_check(m2_8, nsamples=100)
+ 
+
+m2_9 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 800 & id < 901),
+  formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="Drift_rate_exp2_100_9",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+Drift_rate_exp2_100_9 <- add_criterion(m2_9, criterion = c("loo","waic","R2"),file="Drift_rate_exp1_100_9")
+pp_check(m2_9, nsamples=100)
+
+
+m2_10 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" &id > 900 & id < 1001),
+  formula = drift_rate ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="Drift_rate_exp2_100_10",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+Drift_rate_exp2_100_10 <- add_criterion(m10, criterion = c("loo","waic","R2"),file="Drift_rate_exp2_100_10")
+pp_check(m10, nsamples=100)
+m2_1 <- readRDS("~/Dropbox/DDM_CategoricalPerception/Drift_rate_exp2_100_1.rds")
+pp_check(m2_1, nsamples=100)
+tab_model(m2_1)
+bayes_R2(m2_1)
+```
+
+
+The code below generates Figure 7 in the manuscript.
+```{r Visualization 2}
+
+# rearranging the data for posterior density plots
+m2_p <- posterior_samples(m2_1, "b_")
+bias_NEAR_D2 <- m2_p$`b_LanguageD:Biastaendt:DistanceNEAR`-m2_p$`b_LanguageD:Biassendt:DistanceNEAR`
+bias_NEAR_N2 <- m2_p$`b_LanguageN:Biastaendt:DistanceNEAR`-m2_p$`b_LanguageN:Biassendt:DistanceNEAR`
+bias_FAR_D2 <- m2_p$`b_LanguageD:Biastaendt:DistanceFAR`-m2_p$`b_LanguageD:Biassendt:DistanceFAR`
+bias_FAR_N2 <- m2_p$`b_LanguageN:Biastaendt:DistanceFAR`-m2_p$`b_LanguageN:Biassendt:DistanceFAR`
+
+m2_p <- data.frame(bias_NEAR_D2, bias_NEAR_N2, bias_FAR_D2, bias_FAR_N2)
+m2_p <- m2_p %>%
+  pivot_longer (everything(),names_to = "conditions", values_to = "drift_rate")
+m2_p$Language = m2_p$conditions
+m2_p$Distance = m2_p$conditions
+m2_p$Language = gsub("bias_(NEAR|FAR)_N2", "Norwegian", m2_p$Language)
+m2_p$Language = gsub("bias_(NEAR|FAR)_D2", "Danish", m2_p$Language)
+
+m2_p$Distance = gsub("bias_FAR_(D|N)2", "FAR", m2_p$Distance)
+m2_p$Distance = gsub("bias_NEAR_(D|N)2", "NEAR", m2_p$Distance)
+m2_p$Distance = relevel(as.factor(m2_p$Distance), ref = "NEAR")
+
+# figure 7 in the paper
+fig_7 <- ggplot(data = m2_p, aes(y = drift_rate, x = Language, fill = Distance)) +
+geom_flat_violin(position = position_nudge(x = .2, y = 0), alpha = .8) +
+geom_point(aes(y = drift_rate, color = Distance), position = position_jitter(width = .15), size = .5, alpha = 0.8) + 
+geom_boxplot(width = .1, guides = FALSE, outlier.shape = NA, alpha = 0.5) +
+expand_limits(x = 3) +
+guides(fill = FALSE, color = guide_legend(override.aes = list(size = 3)))+
+scale_color_brewer(type = "qual", palette = 2) +
+scale_fill_brewer(type = "qual", palette = 2) +
+  labs(y = "Contextual bias effect on drift rate")+
+coord_flip() +
+theme_bw()+
+theme(axis.text.x = element_text(size=12), axis.text.y = element_text(size=12),  
+        axis.title=element_text(size=14), plot.title = element_text(size =14),
+        legend.title = element_text(size=14), legend.text = element_text(size=12))
+fig_7
+```
+
+Similar to Experiment 1, to check if there is a larger variability between Norwegian participants than between Danish participants, we checked the sd of bias effect on drift rate in NEAR and FAR in both languages. As can be deduced from the numbers, in all conditions the sd is higher for Norwegians than for Danish (i.e. a larger between-participant variablity.) 
+
+```{r}
+# Between-participant variablity
+sd <- c(sd(subset(m2_p, Language == "Danish" & Distance == "NEAR")$drift_rate),sd(subset(m2_p, Language == "Norwegian" & Distance == "NEAR")$drift_rate), sd(subset(m2_p, Language == "Danish" & Distance == "FAR")$drift_rate), sd(subset(m2_p, Language == "Norwegian" & Distance == "FAR")$drift_rate))
+
+Distance <- c("NEAR", "NEAR", "FAR", "FAR")
+Language <- c("Danish", "Norwegian", "Danish", "Norwegian")
+ind2 <- data.frame(Language, Distance, sd)
+ind2
+```
+
+We used the code below to test the hypotheses presented in the results section in the manuscript.
+```{r Hypothesis testing 2 DDM}
+# DDM (drift rate) hypothesis testing
+# H2: Bias x distance x language interaction (bias x distance effect stronger in Norwegian than Danish)
+hypothesis(m2_1, "(LanguageN:Biastaendt:DistanceNEAR - LanguageN:Biassendt:DistanceNEAR) - (LanguageN:Biastaendt:DistanceFAR - LanguageN:Biassendt:DistanceFAR)>(LanguageD:Biastaendt:DistanceNEAR - LanguageD:Biassendt:DistanceNEAR) - (LanguageD:Biastaendt:DistanceFAR - LanguageD:Biassendt:DistanceFAR) ") #YEPS 
+
+# This is, however, caused by the bias effect being stronger in FAR than NEAR in Danish (i.e. bias x distance interaction in the direction opposite to what was expected). Let's have a look at absolute values.
+hypothesis(m2_1, "abs((LanguageN:Biastaendt:DistanceNEAR - LanguageN:Biassendt:DistanceNEAR) - (LanguageN:Biastaendt:DistanceFAR - LanguageN:Biassendt:DistanceFAR)) - abs((LanguageD:Biastaendt:DistanceNEAR - LanguageD:Biassendt:DistanceNEAR) - (LanguageD:Biastaendt:DistanceFAR - LanguageD:Biassendt:DistanceFAR)) < 0") #YEPS 
+
+
+## Tændt bias would involve higher drift rate in both languages
+hypothesis(m2_1, "LanguageD:Biastaendt:DistanceNEAR - LanguageD:Biassendt:DistanceNEAR > 0 ") #Nope
+hypothesis(m2_1, "LanguageD:Biastaendt:DistanceFAR - LanguageD:Biassendt:DistanceFAR > 0 ") # YEP
+hypothesis(m2_1, "LanguageN:Biastaendt:DistanceNEAR - LanguageN:Biassendt:DistanceNEAR > 0 ") #YEP
+hypothesis(m2_1, "LanguageN:Biastaendt:DistanceFAR - LanguageN:Biassendt:DistanceFAR > 0 ") # YEP
+
+
+# bias effect stronger in NEAR than FAR
+hypothesis(m2_1, "LanguageD:Biastaendt:DistanceNEAR - LanguageD:Biassendt:DistanceNEAR > LanguageD:Biastaendt:DistanceFAR - LanguageD:Biassendt:DistanceFAR") # No for Danish
+hypothesis(m2_1, "LanguageN:Biastaendt:DistanceNEAR - LanguageN:Biassendt:DistanceNEAR > LanguageN:Biastaendt:DistanceFAR - LanguageN:Biassendt:DistanceFAR") # No for Norwegian
+
+
+# Tændt bias would involve higher drift rate, and more so in Danish than Norwegian: Nope, the opposite for NEAR and for FAR
+hypothesis(m2_1, "LanguageD:Biastaendt:DistanceNEAR - LanguageD:Biassendt:DistanceNEAR > LanguageN:Biastaendt:DistanceNEAR - LanguageN:Biassendt:DistanceNEAR") # Nope
+hypothesis(m2_1, "LanguageD:Biastaendt:DistanceFAR - LanguageD:Biassendt:DistanceFAR > LanguageN:Biastaendt:DistanceFAR - LanguageN:Biassendt:DistanceFAR") # Nope
+
+```
+
+### Simulations
+Using the drift rate and boundary separation estimates, we created simulations and plotted them. The figure below corresponds to Figure 8 in the manuscript.
+```{r}
+# Danish taendt bias NEAR
+bias = 0 
+diffusionDrift_DK_NEAR_taendt=-0.24
+decisionBoundary_DK_NEAR_taendt = 2.33/2
+ndt=0.57 
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_DK_NEAR_taendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_DK_NEAR_taendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.33/2) {simd$Value[n]<- 2.33/2} 
+  else if (simd$Value[n] < -2.33/2) {simd$Value[n] <- -2.33/2}}
+
+
+DtaendtNEAR = simd
+DtaendtNEAR$Bias = "taendt"
+DtaendtNEAR$Distance = "NEAR"
+DtaendtNEAR$Language = "Danish"
+
+
+# Danish NEAR sendt bias
+
+bias = 0 
+diffusionDrift_DK_NEAR_sendt=-0.25
+decisionBoundary_DK_NEAR_sendt = 2.14/2
+ndt=0.57 
+ 
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_DK_NEAR_sendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_DK_NEAR_sendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.14/2) {simd$Value[n]<- 2.14/2} 
+  else if (simd$Value[n] < -2.14/2) {simd$Value[n] <- -2.14/2}}
+
+
+DsendtNEAR = simd
+DsendtNEAR$Bias = "sendt"
+DsendtNEAR$Distance = "NEAR"
+DsendtNEAR$Language = "Danish"
+
+# Norwegian NEAR tændt bias
+bias = 0 
+diffusionDrift_NO_NEAR_taendt=-0.61
+decisionBoundary_NO_NEAR_taendt = 2.44/2
+ndt=0.57 
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_NO_NEAR_taendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_NO_NEAR_taendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.44/2) {simd$Value[n]<- 2.44/2} 
+  else if (simd$Value[n] < -2.44/2) {simd$Value[n] <- -2.44/2}}
+
+NtaendtNEAR = simd
+NtaendtNEAR$Bias = "taendt"
+NtaendtNEAR$Distance = "NEAR"
+NtaendtNEAR$Language = "Norwegian"
+
+## Norwegian NEAR sendt bias
+bias = 0 
+diffusionDrift_NO_NEAR_sendt=-0.71
+decisionBoundary_NO_NEAR_sendt = 2.3/2
+
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_NO_NEAR_sendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_NO_NEAR_sendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 2.3/2) {simd$Value[n]<- 2.3/2} 
+  else if (simd$Value[n] < -2.3/2) {simd$Value[n] <- -2.3/2}}
+
+NsendtNEAR = simd
+NsendtNEAR$Bias = "sendt"
+NsendtNEAR$Distance = "NEAR"
+NsendtNEAR$Language = "Norwegian"
+
+ddm_NEAR = rbind(DtaendtNEAR, DsendtNEAR, NtaendtNEAR, NsendtNEAR)
+ddm_DK = rbind(DtaendtNEAR, DsendtNEAR)
+ddm_NO = rbind(NtaendtNEAR, NsendtNEAR)
+
+## Danish taendt bias FAR
+bias = 0 
+diffusionDrift_DK_FAR_taendt=-0.12
+decisionBoundary_DK_FAR_taendt = 3.07/2
+ndt=0.57 
+
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_DK_FAR_taendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_DK_FAR_taendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 3.07/2) {simd$Value[n]<- 3.07/2} 
+  else if (simd$Value[n] < -3.07/2) {simd$Value[n] <- -3.07/2}}
+
+
+DtaendtFAR = simd
+DtaendtFAR$Bias = "taendt"
+DtaendtFAR$Distance = "FAR"
+DtaendtFAR$Language = "Danish"
+
+
+# Danish FAR sendt bias
+
+bias = 0 
+diffusionDrift_DK_FAR_sendt=-0.18
+decisionBoundary_DK_FAR_sendt = 3.03/2
+ndt=0.57 
+ 
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_DK_FAR_sendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_DK_FAR_sendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 3.03/2) {simd$Value[n]<- 3.03/2} 
+  else if (simd$Value[n] < -3.03/2) {simd$Value[n] <- -3.03/2}}
+
+
+DsendtFAR = simd
+DsendtFAR$Bias = "sendt"
+DsendtFAR$Distance = "FAR"
+DsendtFAR$Language = "Danish"
+
+# Norwegian FAR tændt bias
+bias = 0 
+diffusionDrift_NO_FAR_taendt=-0.43
+decisionBoundary_NO_FAR_taendt = 3/2
+ndt=0.57 
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_NO_FAR_taendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_NO_FAR_taendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 3/2) {simd$Value[n]<- 3/2} 
+  else if (simd$Value[n] < -3/2) {simd$Value[n] <- -3/2}}
+
+NtaendtFAR = simd
+NtaendtFAR$Bias = "taendt"
+NtaendtFAR$Distance = "FAR"
+NtaendtFAR$Language = "Norwegian"
+
+## Norwegian FAR sendt bias
+bias = 0 
+diffusionDrift_NO_FAR_sendt=-0.52
+decisionBoundary_NO_FAR_sendt = 3.05/2
+
+simd=NULL
+for (sim in seq(20)){
+  Step=1
+  Value=bias
+  n=1
+  while  (abs(Value[n]) < decisionBoundary_NO_FAR_sendt ){
+    n=n+1
+    Value[n] = (Value[n-1] + rnorm(1,0,abs(diffusionDrift_NO_FAR_sendt)))
+    Step[n] = n
+  }
+  dd=data.frame(Sim=sim,Step,Value)
+  if (exists("simd")){simd=rbind(simd,dd)}else{simd=dd}
+}
+simd$Sim=as.factor(simd$Sim)
+for (n in 1:nrow(simd)){
+  if (simd$Value[n] > 3.05/2) {simd$Value[n]<- 3.05/2} 
+  else if (simd$Value[n] < -3.05/2) {simd$Value[n] <- -3.05/2}}
+
+NsendtFAR = simd
+NsendtFAR$Bias = "sendt"
+NsendtFAR$Distance = "FAR"
+NsendtFAR$Language = "Norwegian"
+
+ddm_FAR = rbind(DtaendtFAR, DsendtFAR, NtaendtFAR, NsendtFAR)
+ddm_DK = rbind(DtaendtFAR, DsendtFAR)
+ddm_NO = rbind(NtaendtFAR, NsendtFAR)
+
+ddm_sim2 = rbind(ddm_NEAR, ddm_FAR)
+ddm_sim2$Bias = relevel(as.factor(ddm_sim2$Bias), ref = "taendt")
+ddm_sim2$Distance = relevel(as.factor(ddm_sim2$Distance), ref = "NEAR")
+# rearranging the plot in a way that Danish is on the left, Norwegian is on the right
+p_sim_DK2 = ggplot(subset(ddm_sim2, Language == "Danish"), aes(Step,Value, color = Sim))+geom_line()+ facet_wrap(Distance~Bias)+
+  theme_classic()+guides(color=FALSE, size = FALSE)+
+  theme(axis.text.x = element_text(size=15), axis.text.y = element_text(size=15),  
+        axis.title=element_text(size=15), plot.title = element_text(size =15),
+        legend.title = element_text(size=15), strip.text = element_text(size = 15))+
+  labs(x = "Time Step", y = "Boundary Separation", title="a. DDM Danish")+xlim(0,300)+ylim(-1.5,1.5)+geom_hline(yintercept = 0)
+
+
+p_sim_NO2 = ggplot(subset(ddm_sim2, Language == "Norwegian"), aes(Step,Value, color = Sim))+geom_line()+ facet_wrap(Distance~Bias)+
+  theme_classic()+guides(color=FALSE, size = FALSE)+
+  theme(axis.text.x = element_text(size=15), axis.text.y = element_text(size=15),  
+        axis.title=element_text(size=15), plot.title = element_text(size =15),
+        legend.title = element_text(size=15), strip.text = element_text(size = 15))+
+  labs(x = "Time Step", y = "Boundary Separation", title="b. DDM Norwegian")+xlim(0,300)+ylim(-1.5,1.5)+geom_hline(yintercept = 0)
+
+
+p_2 <- ggarrange(p_sim_DK2, p_sim_NO2)
+p_2
+```
+# Part 2: Analyses not reported in the main body of the manuscript
+
+Below you will find analyses and plots that have not been reported in the main body of the manuscript.
+
+## Experiment 1
+### RT distribution
+
+The figure below shows the distributions of RTs per language and distance, calculated from sentence offset (the negative values indicate responses before sentence offset). 
+
+```{r RT distribution}
+rt_plot <- ggplot(subset(d1, Step == "5"), aes(x = RT_offset, fill = Distance))+geom_density(alpha = 0.2)+facet_wrap(~Language)+theme_classic()
+rt_plot
+```
+
+### Binomial model 
+
+Here, we present the more traditional psychometric model. We built a Bayesian multilevel binomial regression with a Bernoulli likelihood and a probit link (DeCarlo, 1998), focused only on the responses of the participants. 
+
+In this model, the binomial response (judgment of “tændt” versus “sendt”) was predicted by intercept (the tendency to respond “tændt” even when the stimulus is a clear “sendt”) and slope by Step (a discrete modulation of the stimulus between “tændt” and “sendt”, where the slope indicates the sensitivity to changes along the modulation). Note that given the non-linear nature of categorical perception we opted for modeling Step as a monotonic ordinal variable, that is, not assuming constant distance between neighboring steps (Bürkner & Charpentier, 2018). Binomial probit models are defined according to one parameter, rate, that is, the propensity to choose “tændt”. Given our experimental manipulations, we built the following model including contextual bias, distance from target word, and language:
+
+
+Probit(rate)~$\alpha$ ^BiasDistanceLanguage^ p + $\beta$ ^BiasDistanceLanguage^ Step
+
+The superscript indicates that the parameter (intercept or beta) is estimated separately per each value of the variables specified, although they can still be correlated. The presence of more than one variable in superscript indicates that the parameter (intercept or beta) is estimated separately per each combination of the values of the variables specified. The subscript indicates that we assumed individuals could vary from the group-level estimates. 
+
+All predictors but language were modelled as multilevel parameters, that is, including varying or random effects by participants. In other words we expected individual participants to vary in terms of intercept and slope, as well as of the effects of contextual bias and distance; and as potentially correlated with each other. Since each participant belongs to either the Danish or the Norwegian group, language was not modeled as a varying effect. Note that multilevel models perform partial pooling of information, so estimates of each participant are influenced by the data available for all participants. This might reduce differences between participants, but it also provides more conservative estimates, and has been shown to improve generalizability of the models (Gelman & Hill, 2007). Accordingly we also present measures of individual variability in the supplementary materials.
+
+To reduce overfitting and facilitate convergence of the model we used weakly skeptical priors. Priors for alpha (intercept) and beta (sensitivity) were modeled as normal distributions centered at 0 with a standard deviation of .3. Priors for varying effects (individual variability in the multilevel parameters) were modeled as positively truncated normal distributions centered at 0 with a standard deviation of 0.1. The prior for the correlation across varying effects was modeled as a LKJ distribution with an eta of 8, indicating low expectations for extreme correlation values close to 1 or -1. We performed prior predictive checks to ensure these were weakly regularizing priors for the model, that is, priors that would exclude implausibly high values for the effects of the experimental manipulations while not affecting too much our results. The models were fitted using Hamiltonian Monte Carlo samplers (as implemented in Stan, relying on rstan and brms 18,19), with 2 parallel chains with 1000 iterations each, an adapt delta of 0.99 and a maximum tree-depth of 20 to ensure no divergence in the estimation process. The quality of the models was assessed by: i) ensuring no divergences in the estimation process; ii) visual inspection of the Markov chains to ensure stationarity and overlapping between chains; iii) ensuring Rhat statistics to be minor than 1.1 and number of effective samples to be above 100; and iv) performing predictive posterior checks to ensure no obvious issue in the model predictions (akin to residuals checks). 
+
+The model estimates are summarized in the table below.
+
+
+```{r Experiment 1: Binomial model}
+
+# Prior predictive checks
+prior0 <- c(
+  prior(normal(0,0.5),class=Intercept),
+  prior(normal(0,0.3),class=b),
+  prior(normal(0,0.1),class=sd),
+  prior(lkj(8),class=cor)
+)
+
+prior <- c(
+  prior(normal(0,0.3),class=b),
+  prior(normal(0,0.1),class=sd),
+  prior(lkj(8),class=cor)
+)
+
+
+## Build up the actual model: Step, distance and language
+Exp1_StepBiasDistanceLanguage_f <- bf(ResponseN ~ 0 + Bias:DistanceN:Language + Bias:DistanceN:mo(Step) + Bias:DistanceN:Language:mo(Step) +(0 + Bias:DistanceN + Bias:DistanceN:mo(Step) | SubjectID))
+
+
+Exp1_Logistic_StepBiasDistanceLanguage <- brm(Exp1_StepBiasDistanceLanguage_f,
+                     family=bernoulli,
+                     d1,
+                     prior=prior,
+                     sample_prior= TRUE,
+                     file="Exp1_Logistic_StepBiasDistanceLanguage",
+                     iter = 2000,
+                     chains = 2,
+                     cores = 2,
+                     control = list(
+                       max_treedepth = 20,
+                       adapt_delta=0.99))
+
+Exp1_Logistic_StepBiasDistanceLanguage <- add_criterion(
+  Exp1_Logistic_StepBiasDistanceLanguage, 
+  criterion = c("loo","waic","R2"),
+  file="Exp1_Logistic_StepBiasDistanceLanguage")
+
+
+# Posterior predictive checks
+pp_check(Exp1_Logistic_StepBiasDistanceLanguage, nsamples=100)
+
+# Creates a table that summarizes the model parameters
+tab_model(Exp1_Logistic_StepBiasDistanceLanguage)
+
+```
+
+
+To check if there is a larger variability between Norwegian participants than between Danish participants, we checked the sd of bias effect on drift rate in NEAR and FAR in both languages. As can be deducted from the numbers, in all conditions the sd is higher for Norwegians than for Danish (i.e. a larger between-participant variablity.)  
+
+```{r}
+# Between-participant variability
+
+sd <- c(sd(subset(m1_p, Language == "Danish" & Distance == "NEAR")$drift_rate), sd(subset(m1_p, Language == "Norwegian" & Distance == "NEAR")$drift_rate), sd(subset(m1_p, Language == "Danish" & Distance == "FAR")$drift_rate), 
+sd(subset(m1_p, Language == "Norwegian" & Distance == "FAR")$drift_rate))
+Distance <- c("NEAR", "NEAR", "FAR", "FAR")
+Language <- c("Danish", "Norwegian", "Danish", "Norwegian")
+ind <- data.frame(Language, Distance, sd)
+ind
+```
+
+### Boundary separation
+
+Similar to drift rate, we analyzed boundary separation. We set the boundary separation estimate to be normally distributed with a mean of 2.8 and a sd of 0.6 and varying effects with a mean of 0 and a sd 0f 0.001. Again, we built 10 models using 10 different subsets of posterior samples of the participant-by-participant models. The table below presents the estimates of the first model (mbs1). For computational reasons the code is commented out and the model is loaded directly.
+```{r Boundary separation: building the model}
+# ### Boundary separation:
+# # let's set some priors
+# 
+get_prior(data = subset(d_ddm, Experiment == "Exp1" & id < 101),
+          formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+          family = gaussian)
+
+prior = c(
+  prior(normal(2.8, 0.6), class=b),
+  prior(lkj(8), class=cor),
+  prior(normal(0, .001), class=sd)
+)
+
+
+pp_check(mbs1, nsamples=100)
+
+mbs1 <- brm(
+  data = subset(d_ddm, Experiment == "Exp1" & id < 101),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp1_100_1",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+bs_exp1_100_1 <- add_criterion(mbs1, criterion = c("loo","waic","R2"),file="bs_exp1_100_10")
+pp_check(mbs1, nsamples=100)
+
+mbs2 <- brm(
+  data = subset(d_ddm, Experiment == "Exp1" & id > 100 & id < 201),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp1_100_2",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp1_100_2 <- add_criterion(mbs2, criterion = c("loo","waic","R2"),file="bs_exp1_100_2")
+pp_check(mbs2, nsamples=100)
+
+
+mbs3 <- brm(
+  data = subset(d_ddm, Experiment == "Exp1" & id > 200 & id < 301),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp1_100_3",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+bs_exp1_100_3 <- add_criterion(mbs1, criterion = c("loo","waic","R2"),file="bs_exp1_100_3")
+pp_check(mbs3, nsamples=100)
+
+mbs4 <- brm(
+  data = subset(d_ddm, Experiment == "Exp1" & id > 1000 & id < 1101),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp1_100_4",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+
+bs_exp1_100_4 <- add_criterion(mbs4, criterion = c("loo","waic","R2"),file="bs_exp1_100_4")
+pp_check(mbs4, nsamples=100)
+
+
+mbs5 <- brm(
+  data = subset(d_ddm, Experiment == "Exp1" & id > 400 & id < 501),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp1_100_5",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+
+pp_check(mbs5, nsamples=100)
+
+mbs6 <- brm(
+  data = subset(d_ddm, Experiment == "Exp1" & id > 500 & id < 601),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp1_100_6",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp1_100_6 <- add_criterion(mbs6, criterion = c("loo","waic","R2"),file="bs_exp1_100_6")
+pp_check(mbs6, nsamples=100)
+
+mbs7 <- brm(
+  data = subset(d_ddm, Experiment == "Exp1" & id > 600 & id < 701),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp1_100_7",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+
+bs_exp1_100_7 <- add_criterion(mbs4, criterion = c("loo","waic","R2"),file="bs_exp1_100_7")
+pp_check(mbs7, nsamples=100)
+
+mbs8 <- brm(
+  data = subset(d_ddm, Experiment == "Exp1" & id > 700 & id < 801),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp1_100_8",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp1_100_8 <- add_criterion(mbs4, criterion = c("loo","waic","R2"),file="bs_exp1_100_8")
+pp_check(mbs8, nsamples=100)
+
+mbs9 <- brm(
+  data = subset(d_ddm, Experiment == "Exp1" & id > 800 & id < 901),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp1_100_9",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp1_100_9 <- add_criterion(mbs9, criterion = c("loo","waic","R2"),file="bs_exp1_100_9")
+pp_check(mbs9, nsamples=100)
+
+mbs10 <- brm(
+  data = subset(d_ddm, Experiment == "Exp1" & id > 900 & id < 1001),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp1_100_10",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp1_100_10 <- add_criterion(mbs10, criterion = c("loo","waic","R2"),file="bs_exp1_100_10")
+pp_check(mbs10, nsamples=100)
+
+mbs1 <- readRDS("~/Dropbox/DDM_CategoricalPerception/bs_exp1_100_1.rds")
+pp_check(mbs1, nsamples=100)
+tab_model(mbs1)
+```
+The figure below shows the distributions of RTs per language and distance, calculated from sentence offset. Since, due to the experimental setup, it was not possible to respond before sentence offset, there are no negative values in Experiment 2 (unlike Experiment 1).
+```{r}
+rt_plot2 <- ggplot(subset(d2, Step == "5"), aes(x = RT_offset, fill = Distance))+geom_density(alpha = 0.2)+facet_wrap(~Language)+theme_classic()
+rt_plot2
+```
+
+## Experiment 2
+### Binomial model
+
+The more traditional psychometric model for Experiment 2 is presented below. The procedure is exactly the same as in Experiment 1. The table below summarizes the binomial model estimates for Experiment 2. 
+```{r Experiment 2: binomial model}
+
+# Prior predictive checks
+prior0 <- c(
+  prior(normal(0,0.5),class=Intercept),
+  prior(normal(0,0.3),class=b),
+  prior(normal(0,0.1),class=sd),
+  prior(lkj(8),class=cor)
+)
+
+prior <- c(
+  prior(normal(0,0.3),class=b),
+  prior(normal(0,0.1),class=sd),
+  prior(lkj(8),class=cor)
+)
+
+
+
+## Step, distance and language
+Exp_StepBiasDistanceLanguage_f <- bf(ResponseN ~ 0 + Bias:DistanceN:Language + Bias:DistanceN:mo(Step) + Bias:DistanceN:Language:mo(Step) +(0 + Bias:DistanceN + Bias:DistanceN:mo(Step) | SubjectID))
+
+
+Exp2_Logistic_StepBiasDistanceLanguage <- brm(Exp_StepBiasDistanceLanguage_f,
+                     family=bernoulli,
+                     d2,
+                     prior=prior,
+                     sample_prior= TRUE,
+                     file="Exp2_Logistic_StepBiasDistanceLanguage",
+                     iter = 2000,
+                     chains = 2,
+                     cores = 2,
+                     control = list(
+                       max_treedepth = 20,
+                       adapt_delta=0.99))
+
+Exp2_Logistic_StepBiasDistanceLanguage <- add_criterion(Exp2_Logistic_StepBiasDistanceLanguage, criterion = c("loo","waic","R2"),file="Exp2_Logistic_StepBiasDistanceLanguage")
+
+# Posterior predictive checks
+pp_check(Exp2_Logistic_StepBiasDistanceLanguage, nsamples=100)
+tab_model(Exp2_Logistic_StepBiasDistanceLanguage)
+```
+
+### Boundary separation
+
+As in Experiment 1, here we built a follow-up model for boundary separation. We set the boundary separation estimate to be normally distributed with a mean of 2.8 and a sd of 0.6 and varying effects with a mean of 0 and a sd 0f 0.001. Again, we built 10 models using 10 different subsets of posterior samples of the participant by participant models. The table below presents the estimates of the first model (mbs2_1). For computational reasons the code is commented out and the model is loaded directly.
+
+```{r Boundary separation: building the model 2}
+# # exp2 bs supplementary materials
+prior = c(
+  prior(normal(2.8, 0.6), class=b),
+  prior(lkj(8), class=cor),
+  prior(normal(0, .001), class=sd)
+)
+
+mbs2_1 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id < 101),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp2_100_1",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+bs_exp2_100_1 <- add_criterion(mbs2_1, criterion = c("loo","waic","R2"),file="bs_exp2_100_1")
+pp_check(mbs2_1, nsamples=100)
+
+
+mbs2_2 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 100 & id < 201),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp2_100_2",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+bs_exp2_100_2 <- add_criterion(mbs2_2, criterion = c("loo","waic","R2"),file="bs_exp2_100_2")
+pp_check(mbs2_2, nsamples=100)
+
+
+mbs2_3 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 200 & id < 301),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp2_100_3",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp2_100_3 <- add_criterion(mbs2_3, criterion = c("loo","waic","R2"),file="bs_exp2_100_3")
+pp_check(mbs2_3, nsamples=100)
+
+mbs2_4 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 300 & id < 401),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp2_100_4",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp2_100_4 <- add_criterion(mbs2_4, criterion = c("loo","waic","R2"),file="bs_exp2_100_4")
+pp_check(mbs2_4, nsamples=100)
+
+
+mbs2_5 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 400 & id < 501),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp2_100_5",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp2_100_5 <- add_criterion(mbs2_5, criterion = c("loo","waic","R2"),file="bs_exp2_100_5")
+pp_check(mbs2_5, nsamples=100)
+
+
+mbs2_6 <- brm(
+  data = subset(d_ddm,Experiment == "Exp2" & id > 500 & id < 601),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp2_100_6",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp2_100_6 <- add_criterion(mbs2_6, criterion = c("loo","waic","R2"),file="bs_exp2_100_6")
+pp_check(mbs2_6, nsamples=100)
+
+
+mbs2_7 <- brm(
+  data = subset(d_ddm,Experiment == "Exp2" & id > 600 & id < 701),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp2_100_7",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp2_100_7 <- add_criterion(mbs2_7, criterion = c("loo","waic","R2"),file="bs_exp2_100_7")
+pp_check(mbs2_7, nsamples=100)
+
+
+mbs2_8 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 700 & id < 801),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp2_100_8",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp2_100_8 <- add_criterion(mbs2_8, criterion = c("loo","waic","R2"),file="bs_exp2_100_8")
+pp_check(mbs2_8, nsamples=100)
+
+
+mbs2_9 <- brm(
+  data = subset(d_ddm,Experiment == "Exp2" & id > 800 & id < 901),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp2_100_9",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+
+bs_exp2_100_9 <- add_criterion(mbs2_9, criterion = c("loo","waic","R2"),file="bs_exp2_100_9")
+pp_check(mbs2_9, nsamples=100)
+
+mbs2_10 <- brm(
+  data = subset(d_ddm, Experiment == "Exp2" & id > 900 & id < 1001),
+  formula = bs ~ 0 + Language : Bias : Distance + (0 + Bias : Distance | SubjectID),
+  family = gaussian,
+  prior = prior,
+  sample_prior = T,
+  file="bs_exp2_100_10",
+  iter = 4e3,
+  chains = 2,
+  cores = 2,
+  control = list(
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+
+)
+# 
+bs_exp2_100_10 <- add_criterion(mbs2_10, criterion = c("loo","waic","R2"),file="bs_exp2_100_10")
+pp_check(mbs2_10, nsamples=100)
+mbs2_1 <- readRDS("~/Dropbox/DDM_CategoricalPerception/bs_exp2_100_1.rds")
+pp_check(mbs2_1, nsamples=100)
+tab_model(mbs2_1)
+```
